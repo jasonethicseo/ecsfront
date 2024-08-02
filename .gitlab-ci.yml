@@ -1,0 +1,54 @@
+stages:
+  - build
+  - push
+  - deploy
+
+variables:
+  AWS_REGION: ca-central-1 #본인 리전
+  ECR_REGISTRY: 381492185710.dkr.ecr.$AWS_REGION.amazonaws.com #변경사항없음 -추후 사용시 게정 어카운트 변경
+  ECR_REPOSITORY: ecs-970728 #본인 레포지토리 URL
+  CODEDEPLOY_APPLICATION: codedeploy-test-frontend-970728 #본인 Codedeploy Application 명
+  CODEDEPLOY_DEPLOYMENT_GROUP: codedeploy-test-front-group-970728 #본인 Codedeploy Group 명
+  S3_BUCKET_NAME: codedeploy-970728-frontend # 본인 S3 bucket 명
+
+before_script:
+  - apt-get update && apt-get install -y curl jq python3 python3-pip python3-venv unzip zip
+  - apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+  - add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  - apt-get update && apt-get install -y docker-ce
+  - python3 -m venv venv
+  - source venv/bin/activate
+  - pip install awscli
+  - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  - unzip awscliv2.zip
+  - ./aws/install
+  - /usr/local/bin/aws --version
+  - /usr/local/bin/aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID # gitalb variable 측에 Access Key 설정
+  - /usr/local/bin/aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY # gitlab variable 측에 Secret Assess Key 설정
+  - /usr/local/bin/aws configure set default.region $AWS_REGION
+  - $(aws ecr get-login --no-include-email --region $AWS_REGION)
+  
+build:
+  stage: build
+  script:
+    - docker build -t $ECR_REPOSITORY:latest .
+    - docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+  only:
+    - main
+
+push:
+  stage: push
+  script:
+    - docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+  only:
+    - main
+
+deploy:
+  stage: deploy
+  script:
+    - zip -r deploy-package.zip appspec.yml
+    - aws s3 cp deploy-package.zip s3://$S3_BUCKET_NAME/$CI_COMMIT_SHA.zip
+    - aws deploy create-deployment --application-name $CODEDEPLOY_APPLICATION --deployment-config-name CodeDeployDefault.ECSAllAtOnce --deployment-group-name $CODEDEPLOY_DEPLOYMENT_GROUP --s3-location bucket=$S3_BUCKET_NAME,bundleType=zip,key=$CI_COMMIT_SHA.zip
+  only:
+    - main
